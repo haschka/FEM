@@ -1,0 +1,167 @@
+/* \brief The function implementing the conjugate gradient solver (scalar).
+ * This function implements the conjugate gradient solver in it's scalar version
+ * it essentially solves the matrix system K u = F using the reduced 
+ * stiffness matrix (without fixed nodes). 
+ * \param object the structure structure describing the fem problem
+ * \param reduced_stiffness_matrix the reduced stiffness matrix ( without
+ *                                 fixed nodes ).
+ */
+double * obtain_reduced_displacements_cg(structure object,
+					 sparse_matrix
+					 reduced_stiffness_matrix) {
+
+  int i,j,k, iterator_count;
+  
+  sparse_matrix A;
+  double * b;
+  double * x;
+  double * r;
+  double * r_new;
+  double * p;
+  double * Ap;
+  double alpha, beta;
+
+  double r_inner;
+  double accumulate_buffer;
+
+  int r_size = reduced_size(object.nodes, object.n_nodes);
+
+  double** value = (double**)malloc(r_size*3*sizeof(double*)); // values in rows
+  int** index = (int**)malloc(r_size*3*sizeof(int*)); // row indicies
+  int* index_size = (int*)malloc(r_size*3*sizeof(int)); // numer of values in rows
+  double* jacobi_factors = (double*)malloc(r_size*3*sizeof(double));
+
+  double* current_values; // pointer to get offsets out of the loops
+  int* current_indicies;
+  
+  double* force = create_reduced_force_vector(object);
+  double * reduced_displacements = (double*)malloc(sizeof(double)*r_size*3);
+  
+  memset(reduced_displacements,0,sizeof(double)*r_size*3);
+
+  double * z = (double*)malloc(sizeof(double)*r_size*3);
+  
+  // A = x b notation is used in the following
+
+  A = reduced_stiffness_matrix;
+  b = force;
+  x = reduced_displacements;
+
+  A.eye = create_sparse_eye(A);
+  A.has_eye = 1;
+  
+  // To speed up computation create index accessors;
+
+  for(i=0;i<r_size*3;i++) {
+    value[i] = (double*)malloc(r_size*3*sizeof(double));
+    index[i] = (int*)malloc(r_size*3*sizeof(int));
+    jacobi_factors[i] = 1./get_value_from_sorted_sparse_matrix(A,i,i);
+    k=0;
+    for(j=0;j<r_size*3;j++) {
+      if(get_value_in_binary_index_at_index(A.eye,(long)i*(long)r_size*3+j)
+	 == 1) {
+	value[i][k] = get_value_from_sorted_sparse_matrix(A,j,i);
+	index[i][k] = j;
+	k++;
+      }
+    }
+    index_size[i] = k;
+    value[i] = (double*)realloc(value[i],k*sizeof(double));
+    index[i] = (int*)realloc(index[i],k*sizeof(int));
+  }
+  
+  free(A.eye);
+  A.has_eye = 0;
+  
+  // initialize r_0 = b - Ax_0
+  //            p_0 = r_0
+  r = (double*)malloc(r_size*3*sizeof(double));
+  r_new = (double*)malloc(r_size*3*sizeof(double));
+  p = (double*)malloc(r_size*3*sizeof(double));
+  Ap = (double*)malloc(r_size*3*sizeof(double));
+  
+  // check for common errors, i.e. out of ram
+  if( r == NULL || r_new == NULL || p == NULL || Ap == NULL || z == NULL ) {
+    printf("Memory allocation error @ obtain_reduced_displacements_cg()\n");
+    _exit(1);
+  }
+ 
+  r_inner = 0;
+
+  for(i=0;i<r_size*3;i++) {
+    accumulate_buffer = 0;
+    current_values = value[i];
+    current_indicies = index[i];
+    for(j=0;j<index_size[i];j++) {
+      accumulate_buffer += current_values[j]*x[current_indicies[j]];
+    }
+    r[i] = b[i] - accumulate_buffer;
+    z[i] = r[i]*jacobi_factors[i];
+    p[i] = z[i];
+    r_inner += r[i]*z[i];
+  }
+
+  iterator_count = 1;
+  for(;;) {
+    accumulate_buffer=0;
+    for(i=0;i<r_size*3;i++) {
+      Ap[i] = 0;
+      current_values = value[i];
+      current_indicies = index[i];
+      for(j=0;j<index_size[i];j++) {
+	Ap[i] += current_values[j]*p[current_indicies[j]];
+      }
+      accumulate_buffer += p[i]*Ap[i];
+    }
+    alpha = r_inner/accumulate_buffer;
+    
+    accumulate_buffer = 0;
+    for(i=0;i<r_size*3;i++) {
+      x[i] += alpha*p[i];
+      r[i] -= alpha*Ap[i];
+    }
+
+    if(__builtin_expect( iterator_count % 50 == 0,0 )) {
+      printf("Iteration %i, error squared %e \n",
+	     iterator_count, r_inner);
+      //      goto finish;
+    }
+    
+    if(__builtin_expect(sqrt(r_inner) < 1.0E-10 ,0)) {
+      goto finish;
+    }
+    
+    beta = r_inner;
+    
+    r_inner = 0;
+    for(i=0;i<r_size*3;i++) {
+      z[i] = jacobi_factors[i]*r[i];
+      r_inner += z[i]*r[i];
+    }
+    beta = r_inner/beta;
+
+    for(i=0;i<r_size*3;i++) {
+      p[i] = z[i] + beta*p[i];
+    }
+    iterator_count++;
+  }
+  
+ finish:
+
+  for(i=0;i<r_size*3;i++) {
+    free(value[i]);
+    free(index[i]);
+  }
+
+  free(jacobi_factors);
+  free(index);
+  free(value);
+  
+  free(r);
+  free(z);
+  free(p);
+  free(Ap);
+  free(r_new);
+  
+  return(x);
+}

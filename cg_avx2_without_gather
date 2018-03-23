@@ -1,0 +1,363 @@
+/* \brief The function implementing the conjugate gradient solver (AVX2).
+ * This function implements the conjugate gradient solver in it's AXV2 version
+ * it essentially solves the matrix system K u = F using the reduced 
+ * stiffness matrix (without fixed nodes). 
+ * \param object the structure structure describing the fem problem
+ * \param reduced_stiffness_matrix the reduced stiffness matrix ( without
+ *                                 fixed nodes ).
+ */
+double * obtain_reduced_displacements_cg(structure object,
+					 sparse_matrix
+					 reduced_stiffness_matrix) {
+
+  int i,j,k,l, iterator_count;
+  
+  sparse_matrix A;
+  double * b;
+  double * x;
+  double * r;
+  double * r_new;
+  double * p;
+  double * Ap;
+  double alpha, beta;
+
+  // make sure variables we store from vectors to are aligned
+  double r_inner __attribute__((aligned(32))) = 0;
+  long storagemask[4] __attribute__((aligned(32))) = {-1,0,0,0};
+  double accumulate_buffer;
+  
+  __m256d r_inner_v;
+  __m256d accumulate_buffer_v;
+
+  __m256d b_v;
+  __m256d r_v;
+  __m256d z_v;
+  __m256d Ap_v;
+  __m256d p_v;
+  __m256d jacobi_factors_v;
+  __m256d current_values_v;
+  __m256d alpha_v, beta_v, minus_alpha_v;
+  // gather from index
+  __m128i index_vector;
+
+  __m256i storagemask_v = _mm256_load_si256((__m256i*)storagemask);
+  
+  __m256d x_v;
+
+  // helper vectors;
+
+  __m256d zero_v = _mm256_setzero_pd();
+  __m256d minus_one = _mm256_set1_pd(-1.);
+
+  // gather assembly vectors
+
+  __m128d lower_v;
+  __m128d upper_v;
+
+  __m128d store_v;
+  
+  int r_size = reduced_size(object.nodes, object.n_nodes);
+
+  int r_size_three = r_size*3;
+  int r_size_pad; // required for vectors
+  int vec_alloc_size;
+  
+  double** value;
+  double* value_buffer;
+  int** index;
+  int* index_buffer;
+  int* index_size;
+
+  int index_vec_size, index_vec_pad; // buffers for index_size vectorization
+
+  double* current_values; // pointer to get offsets out of the loops
+  int* current_indicies;
+
+  double* reduced_displacements;
+  double* jacobi_factors;
+  double* z;
+
+  // force requires nodes 
+  double * force;
+  node* nodes;
+  
+  if(r_size_three%4 == 0) {
+    r_size_pad = 0;
+  } else {
+    r_size_pad = 4 - r_size_three%4;
+  }
+
+  vec_alloc_size = r_size_three+r_size_pad;
+
+  // inline force vector due to memory constraints
+
+  force = (double*)_mm_malloc(vec_alloc_size*sizeof(double),32);
+
+  if (r_size_pad != 0) {
+    for (i=1;i<=r_size_pad;i++) {
+      force[vec_alloc_size-i] = 0.;
+    }
+  }
+  
+  nodes = object.nodes;
+
+  j = 0;
+  for (i=0;i<object.n_nodes;i++) {
+    if (nodes[i].fixed != 1) {
+      for(k=0;k<3;k++) {
+	force[j*3+k]=nodes[i].f[k];
+      }
+      j++;
+    }
+  }
+
+  // end of inlined force generation
+  
+  value = (double**)_mm_malloc(r_size*3*sizeof(double*),32); // values in rows
+  index = (int**)_mm_malloc(r_size*3*sizeof(int*),32); // row indicies
+  index_size = (int*)_mm_malloc(r_size*3*sizeof(int),32); // numer of val in rows
+   
+  reduced_displacements =
+    (double*)_mm_malloc(vec_alloc_size*sizeof(double),32);
+  jacobi_factors = (double*)_mm_malloc(vec_alloc_size*sizeof(double*),32);
+  z = (double*)_mm_malloc(vec_alloc_size*sizeof(double),32);
+
+  if( value == NULL || index == NULL || index_size == NULL ||
+      reduced_displacements == NULL || jacobi_factors == NULL ||
+      z == NULL ) {
+    printf("Error allocating memory in @obtain_reduced_displacements_cg()\n");
+    _exit(1);
+  }
+  
+  if(r_size_pad != 0) {
+    for (i=1;i<=r_size_pad;i++){
+      jacobi_factors[vec_alloc_size-i] = 0.;
+      z[vec_alloc_size-i] = 0.;
+    }
+  }
+  
+  memset(reduced_displacements,0,sizeof(double)*vec_alloc_size);
+  
+  // A = x b notation is used in the following
+
+  A = reduced_stiffness_matrix;
+  b = force;
+  x = reduced_displacements;
+
+  A.eye = create_sparse_eye(A);
+  A.has_eye = 1;
+  
+  // To speed up computation create index accessors;
+
+  for(i=0;i<r_size*3;i++) {
+    value_buffer = (double*)malloc(vec_alloc_size*sizeof(double));
+    index_buffer = (int*)malloc(vec_alloc_size*sizeof(int));
+    jacobi_factors[i] = 1./get_value_from_sorted_sparse_matrix(A,i,i);
+    k=0;
+    for(j=0;j<r_size*3;j++) {
+      if(get_value_in_binary_index_at_index(A.eye,(long)i*(long)r_size*3+j)
+	 == 1) {
+	value_buffer[k] = get_value_from_sorted_sparse_matrix(A,j,i);
+	index_buffer[k] = j;
+	k++;
+      }
+    }
+    if (k%4 == 0) {
+      index_vec_pad = 0;
+    } else {
+      index_vec_pad = 4-k%4;
+    }
+    index_size[i] = index_vec_size = k+index_vec_pad;
+
+    value[i] = (double*)_mm_malloc(index_vec_size*sizeof(double),32);
+    memcpy(value[i],value_buffer,index_vec_size*sizeof(double));
+    free(value_buffer);
+  
+    index[i] = (int*)_mm_malloc(index_vec_size*sizeof(int),32);
+    memcpy(index[i],index_buffer,index_vec_size*sizeof(int));
+    free(index_buffer);
+
+    // make sure that padded is zero
+    if(index_vec_pad != 0) {
+      for (l=1;l<=index_vec_pad;l++){
+	value[i][index_vec_size-l] = 0.;
+	index[i][index_vec_size-l] = 0.;
+      }
+    }
+  }
+  
+  free(A.eye);
+  A.has_eye = 0;
+  
+  // initialize r_0 = b - Ax_0
+  //            p_0 = r_0
+  r = (double*)_mm_malloc(vec_alloc_size*sizeof(double),32);
+  r_new = (double*)_mm_malloc(vec_alloc_size*sizeof(double),32);
+  p = (double*)_mm_malloc(vec_alloc_size*sizeof(double),32);
+  Ap = (double*)_mm_malloc(vec_alloc_size*sizeof(double),32);
+
+  if (r_size_pad != 0) {
+    for (i=1;i<=r_size_pad;i++){
+      r[vec_alloc_size-i] = 0.;
+      r_new[vec_alloc_size-i] = 0.;
+      p[vec_alloc_size-i] = 0.;
+      Ap[vec_alloc_size-i] = 0.;
+    }
+  }
+  
+  // check for common errors, i.e. out of ram
+  if( r == NULL || r_new == NULL || p == NULL || Ap == NULL || z == NULL ) {
+    printf("Memory allocation error @ obtain_reduced_displacements_cg()\n");
+    _exit(1);
+  }
+ 
+  r_inner = 0.;
+  r_inner_v= _mm256_setzero_pd();
+
+  for(i=0;i<vec_alloc_size;i+=4) {
+    b_v = _mm256_load_pd(b+i);
+    jacobi_factors_v = _mm256_load_pd(jacobi_factors+i);
+
+    r_v = b_v;
+    z_v = _mm256_mul_pd(r_v,jacobi_factors_v);
+    r_inner_v = _mm256_fmadd_pd(r_v,z_v,r_inner_v);
+
+    _mm256_store_pd(r+i,r_v);
+    _mm256_store_pd(z+i,z_v);
+    _mm256_store_pd(p+i,z_v);
+  }
+
+  r_inner_v = _mm256_hadd_pd(r_inner_v,r_inner_v);
+  r_inner_v = _mm256_permute4x64_pd(r_inner_v,_MM_SHUFFLE(0,2,1,3));
+  r_inner_v = _mm256_hadd_pd(r_inner_v,r_inner_v);
+
+  iterator_count = 1;
+  
+  for(;;) {
+    
+    for(i=0;i<r_size*3;i++) {
+      Ap_v = _mm256_setzero_pd();
+      
+      current_values = value[i];
+      current_indicies = index[i];
+      
+      for(j=0;j<index_size[i];j+=4) {
+	current_values_v = _mm256_load_pd(current_values+j);
+	
+	lower_v = _mm_loadl_pd(lower_v,p+current_indicies[j]);
+	lower_v = _mm_loadh_pd(lower_v,p+current_indicies[j+1]);
+
+	upper_v = _mm_loadl_pd(upper_v,p+current_indicies[j+2]);
+	upper_v = _mm_loadh_pd(upper_v,p+current_indicies[j+3]);
+
+	//p_v = _mm256_set_m128d(upper_v,lower_v);
+	
+	p_v = _mm256_insertf128_pd(p_v,lower_v,0);
+	p_v = _mm256_insertf128_pd(p_v,upper_v,1);
+
+	Ap_v = _mm256_fmadd_pd(current_values_v,p_v,Ap_v);
+      }
+      Ap_v = _mm256_hadd_pd(Ap_v,Ap_v);
+      Ap_v = _mm256_permute4x64_pd(Ap_v,_MM_SHUFFLE(0,2,1,3));
+      Ap_v = _mm256_hadd_pd(Ap_v,Ap_v);
+
+      store_v = _mm256_extractf128_pd(Ap_v,0);
+      _mm_storeh_pd(Ap+i,store_v);
+      //_mm256_maskstore_pd(Ap+i,storagemask_v,Ap_v);
+    }
+
+    accumulate_buffer_v=_mm256_setzero_pd();
+    
+    for(i=0;i<vec_alloc_size;i+=4) {
+      Ap_v = _mm256_load_pd(Ap+i);
+      p_v = _mm256_load_pd(p+i);
+      accumulate_buffer_v = _mm256_fmadd_pd(p_v,Ap_v,accumulate_buffer_v);
+    }
+    
+    accumulate_buffer_v = _mm256_hadd_pd(accumulate_buffer_v,
+					 accumulate_buffer_v);
+    accumulate_buffer_v = _mm256_permute4x64_pd(accumulate_buffer_v,
+						_MM_SHUFFLE(0,2,1,3));
+    accumulate_buffer_v = _mm256_hadd_pd(accumulate_buffer_v,
+					 accumulate_buffer_v);
+
+    
+    alpha_v = _mm256_div_pd(r_inner_v,accumulate_buffer_v);
+    
+    accumulate_buffer_v = _mm256_setzero_pd();
+    for(i=0;i<vec_alloc_size;i+=4) {
+      x_v = _mm256_load_pd(x+i);
+      r_v = _mm256_load_pd(r+i);
+      p_v = _mm256_load_pd(p+i);
+      Ap_v = _mm256_load_pd(Ap+i);
+
+      x_v = _mm256_fmadd_pd(alpha_v,p_v,x_v);
+      minus_alpha_v = _mm256_mul_pd(alpha_v,minus_one);
+      r_v = _mm256_fmadd_pd(minus_alpha_v,Ap_v,r_v);
+
+      _mm256_store_pd(x+i,x_v);
+      _mm256_store_pd(r+i,r_v);
+    }
+
+    store_v = _mm256_extractf128_pd(r_inner_v,0);
+    _mm_storeh_pd(&r_inner,store_v);
+    
+    //_mm256_maskstore_pd(&r_inner,storagemask_v,r_inner_v);
+    
+    if(__builtin_expect( iterator_count % 50 == 0,0 )) {
+      printf("Iteration %i, error squared %e \n",
+	     iterator_count, r_inner);
+      //      goto finish;
+    }
+    
+    if(__builtin_expect(sqrt(r_inner) < 1.0E-10 ,0)) {
+      goto finish;
+    }
+    
+    beta_v = r_inner_v;
+    
+    r_inner_v = _mm256_setzero_pd();
+    for(i=0;i<vec_alloc_size;i+=4) {
+      r_v = _mm256_load_pd(r+i);
+      jacobi_factors_v = _mm256_load_pd(jacobi_factors+i);
+      z_v = _mm256_mul_pd(jacobi_factors_v,r_v);
+      r_inner_v = _mm256_fmadd_pd(z_v,r_v,r_inner_v);
+      _mm256_store_pd(z+i,z_v);
+    }
+    r_inner_v = _mm256_hadd_pd(r_inner_v,r_inner_v);
+    r_inner_v = _mm256_permute4x64_pd(r_inner_v,
+				      _MM_SHUFFLE(0,2,1,3));
+    r_inner_v = _mm256_hadd_pd(r_inner_v,r_inner_v);
+    
+    beta_v = _mm256_div_pd(r_inner_v,beta_v);
+    
+    for(i=0;i<vec_alloc_size;i+=4) {
+      p_v = _mm256_load_pd(p+i);
+      z_v = _mm256_load_pd(z+i);
+      
+      p_v = _mm256_fmadd_pd(beta_v,p_v,z_v);
+      _mm256_store_pd(p+i,p_v);
+    }
+    iterator_count++;
+  }
+  
+  finish:
+  
+  for(i=0;i<r_size*3;i++) {
+    _mm_free(value[i]);
+    _mm_free(index[i]);
+  }
+  
+  _mm_free(jacobi_factors);
+  free(index);
+  free(value);
+
+  _mm_free(b);
+  _mm_free(r);
+  _mm_free(z);
+  _mm_free(p);
+  _mm_free(Ap);
+  _mm_free(r_new);
+  
+  return(x);
+}
