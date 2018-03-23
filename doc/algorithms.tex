@@ -1,0 +1,467 @@
+\chapter{Theory}
+
+\section{Static Finite Element Analyses}
+
+This hexaheardral finite element solver implements the so called \emph{direct
+  stiffness appoach}
+\cite{bathe}. At the center of this approach lies the solution of the
+linear sparse system:
+\begin{equation}
+  K_{ij} u_j = F_i
+  \label{eqn-force-displacement}
+\end{equation}
+where $K$ is the stiffness matrix, $u$ the displacement vector and $F$
+the vector of applied forces. For $n$ nodes $i$ and $j$ ranges from
+$1 \le i,j \le 3n$  as each
+node has three degrees of freedom.
+The problem can thus be solved in finding the
+appropriate stiffness matrix $K$ for the mesh in question. 
+Solve the linear system (\ref{eqn-force-displacement}) one obtains the
+displacements of each node. These displacements allow us then
+calculate strains, stresses as well as other linked results with relative
+ease.
+
+\subsection{Determination of the Stiffness Matrix}
+
+As we sketch the algorithm, we start with the description of how we derive
+the stiffness matrix for a system. The basic idea here is that one can
+determine a local stiffness matrix for each finite element in the
+system. Once such a local stiffness matrix is obtained, it can, due to
+linearty, be summed into the global stiffness matrix.
+The dertermination of the local stiffness matrix 
+requires several fine tricks. The first such trick is to transpose the element
+in question into an easy to integratable local coordiante system ${\xi,
+\eta,\zeta}$ where each element represents a perfect cubic shape with
+an edgelength of 2, ranging from $-1 \le \xi,\eta,\zeta \le 1$. The
+coordinate transformations for the element are then described by so
+called shape functions. As we only treat hexaheadral elements with
+this solver the shape functions are given by the following equations:
+
+\begin{eqnarray}
+  h_1 &=& \frac{1}{8}(1-\xi)(1-\eta)(1-\zeta), \nonumber \\
+  h_2 &=& \frac{1}{8}(1+\xi)(1-\eta)(1-\zeta), \nonumber \\
+  h_3 &=& \frac{1}{8}(1+\xi)(1+\eta)(1-\zeta), \nonumber \\
+  h_4 &=& \frac{1}{8}(1-\xi)(1+\eta)(1-\zeta), \nonumber \\
+  h_5 &=& \frac{1}{8}(1-\xi)(1-\eta)(1+\zeta), \nonumber \\
+  h_6 &=& \frac{1}{8}(1+\xi)(1-\eta)(1+\zeta), \nonumber \\
+  h_7 &=& \frac{1}{8}(1+\xi)(1+\eta)(1+\zeta), \nonumber \\
+  h_8 &=& \frac{1}{8}(1-\xi)(1+\eta)(1+\zeta),
+  \label{eqn-shape}
+\end{eqnarray}
+together with the coordinate transformation:
+\begin{equation}
+  x = \sum_{i=1}^8x_ih_i,\qquad y = \sum_{i=1}^8y_ih_i, \qquad z =
+  \sum_{i=1}^8z_ih_i,
+  \label{eqn-cotrans}
+\end{equation}
+where $x_i$,$y_i$,$z_i$ are the coordinates of the hexheadral element's
+nodes in the global reference frame.  
+
+So called non conforming displacement nodes, introduce three further
+functions which are of special interest:
+\begin{equation}
+  p_1 = (1-\xi^2),\qquad 
+  p_2 = (1-\eta^2),\qquad 
+  p_3 = (1-\zeta^2).
+  \label{eqn-bubble}
+\end{equation}
+These functions are not coordinate transformations in the sens that they are not
+reltated to any node. They can be interpreted as a deformation of the element in
+a parabobla-like way along the $\xi$,$\eta$ or $\zeta$ axes. Therefore, they are
+further known by the name \emph{bubble functions} in literature.
+These functions are necessary to avoid the so called \emph{shear locking}
+phenomena in the mesh \cite{incomp1}.
+
+Th shape functions allow us to evaluate the Jacobian $J$ and
+its inverse $J^{-1}$:
+\begin{equation}
+  J = \frac{\partial(x,y,z)}{\partial(\xi,\eta,\zeta)},\qquad
+    J^{-1} = \frac{\partial(\xi,\eta,\zeta)}{\partial(x,y,z)},
+    \label{jacobi}
+\end{equation}
+which, looking at the edges of the elements (defined by the nodes)
+where both $x$,$y$,$z$ and $\xi$,$\eta$,$\zeta$ are known, is found to be:
+\begin{equation}
+  J = \left[
+    \begin{array}{ccc}
+      \sum_{i=1}^8x_i\frac{\partial h_i}{\partial\xi} &
+      \sum_{i=1}^8y_i\frac{\partial h_i}{\partial\xi} &
+      \sum_{i=1}^8z_i\frac{\partial h_i}{\partial\xi} \\
+      \sum_{i=1}^8x_i\frac{\partial h_i}{\partial\eta} &
+      \sum_{i=1}^8y_i\frac{\partial h_i}{\partial\eta} &
+      \sum_{i=1}^8z_i\frac{\partial h_i}{\partial\eta} \\
+      \sum_{i=1}^8x_i\frac{\partial h_i}{\partial\zeta} &
+      \sum_{i=1}^8y_i\frac{\partial h_i}{\partial\zeta} &
+      \sum_{i=1}^8z_i\frac{\partial h_i}{\partial\zeta}
+    \end{array}
+    \right].
+  \label{eqn-jacobien}
+\end{equation}
+
+Using d'Alemberts variational calculus one has the possibility to show from
+physical principals that \cite{bathe}:
+\begin{equation}
+  K = \int_VB^{T}DB dV,
+  \label{eqn-stiffness}
+\end{equation}
+where V is the volume occupied, $B$ is the strain displacement
+relation which we will be describe in the following. $D$ is the stress
+strain relation, which can be derived from Hooke's law
+\cite{mechanics} in three dimensions and is given by: 
+\begin{eqnarray}
+  \left[\begin{array}{c}
+      \sigma_{11} \\ \sigma_{22} \\ \sigma_{33} \\ \sigma_{12} \\
+      \sigma_{23} \\ \sigma_{13}
+    \end{array}
+    \right]
+  &=& \Gamma\left[\begin{array}{cccccc}
+    1-\nu & \nu & \nu & 0 & 0 & 0 \\
+    \nu & 1-\nu & \nu & 0 & 0 & 0 \\
+    \nu & \nu & 1-\nu & 0 & 0 & 0 \\
+    0 & 0 & 0 & \frac{1}{2}(1-2\nu) & 0 & 0 \\
+    0 & 0 & 0 & 0 & \frac{1}{2}(1-2\nu) & 0 \\
+    0 & 0 & 0 & 0 & 0 & \frac{1}{2}(1-2\nu)
+    \end{array}
+    \right] 
+  \left[\begin{array}{c}
+      \epsilon_{11} \\ \epsilon_{22} \\ \epsilon_{33} \\ 2\epsilon_{13} \\
+      2\epsilon_{23} \\ 2\epsilon_{13}
+    \end{array}
+    \right] \nonumber \\
+  &=& D \left[\begin{array}{c}
+      \epsilon_{11} \\ \epsilon_{22} \\ \epsilon_{33} \\ 2\epsilon_{12} \\
+      2\epsilon_{23} \\ 2\epsilon_{13}
+    \end{array}
+    \right],
+\end{eqnarray}
+with the prefactor $\Gamma = \frac{E}{(1+\nu)(1-2\nu)}$. Here $E$ is
+the Young's modulus and $\nu$ the Poisson material constant.
+The strain displacement relation can be obtained from the partial
+derivatives of the shape function:
+\begin{equation}
+  \left[\begin{array}{c}
+      \epsilon_{11} \\ \epsilon_{22} \\ \epsilon_{33} \\ 2\epsilon_{23} \\
+      2\epsilon_{13} \\ 2\epsilon_{12}
+    \end{array}
+    \right] = \left[\begin{array}{ccc}
+      \frac{\partial h_i}{\partial x} & 0 & 0 \\
+      0 & \frac{\partial h_i}{\partial y} & 0 \\
+      0 & 0 & \frac{\partial h_i}{\partial z} \\
+      \frac{\partial h_i}{\partial y} &
+      \frac{\partial h_i}{\partial x} & 0 \\
+      \frac{\partial h_i}{\partial z} & 0 &
+      \frac{\partial h_i}{\partial y} \\
+      \frac{\partial h_i}{\partial z} & 0 & \frac{\partial h_i}{\partial x}
+    \end{array}
+    \right] \left[\begin{array}{c} u_{i,x} \\ u_{i,y}
+      \\ u_{i,z} \end{array}\right] =
+  B
+  \left[\begin{array}{c} u_{i,x} \\ u_{i,y}
+      \\ u_{i,z} \end{array}\right].
+  \label{eqn-strain-displacement}
+\end{equation}
+In (\ref{eqn-strain-displacement}) $i$ includes all the shape functions
+going from 1 to 8, which
+creates a repeated pattern in the matrix. Hence, for a single
+hexahedral element $B$ is a 24 by 6 matrix. In the same way $u_{i,xyz}$
+is a 24 component vector. The operators needed in
+order to evaluate the partial derivatives in equation
+(\ref{eqn-strain-displacement}) can be obtained by analytically
+deriving the shape functions shown in (\ref{eqn-shape}) 
+and in calculating the inverse of the Jacobian matrix (\ref{eqn-jacobien}):
+\begin{equation}
+  \left[\begin{array}{c}
+      \frac{\partial p_i}{\partial x} \\
+      \frac{\partial p_i}{\partial y} \\
+      \frac{\partial p_i}{\partial z}
+    \end{array}\right]
+  =
+  J^{-1}{(\xi,\eta,\zeta)}
+  \left[\begin{array}{c}
+      \frac{\partial p_i}{\partial \xi} \\
+      \frac{\partial p_i}{\partial \eta} \\
+      \frac{\partial p_i}{\partial \zeta}
+    \end{array}\right]
+\end{equation}
+
+Writing down these
+matricies we did not account for the supplimentary bubble functions
+in equation (\ref{eqn-bubble}).
+
+As the bubble functions are not connected to any nodes, a trick called
+static condensation is used in order for them to be affective. This 
+allows us to take the virtual displacement coordinates $a$ and the
+virtual displacement matrix $P$ into account. Where $a$ is the virtual
+analogue to displacements $u$ and the matrix $G$ to the strain-displacement
+relation $B$. As there are three bubble functions (\ref{eqn-bubble})
+three further virtual displacement coordinates $a$ are introduced,
+resulting in 9 virtual degrees of freedom. For a single element $G$ is
+hence, a 9 by 6 matrix, taking for three components the same form as $B$.
+To clarify this let us rewrite (\ref{eqn-stiffness}) taking these
+virtual displacents into account: 
+
+\begin{equation}
+  K = \left[\begin{array}{cc}
+      \int_V B^{T}DB dV & \int_V B^{T}DG dV \\
+      \int_V(B^{T}DG)^{T} dV & \int_VG^{T}DG dV
+    \end{array}\right],
+  \label{eqn-stiffness-and-virtual}
+\end{equation}
+
+with,
+
+\begin{equation}
+  G = \left[\begin{array}{ccc}
+      \frac{\partial p_i}{\partial x} & 0 & 0 \\
+      0 & \frac{\partial p_i}{\partial y} & 0 \\
+      0 & 0 & \frac{\partial p_i}{\partial z} \\
+      \frac{\partial p_i}{\partial y} &
+      \frac{\partial p_i}{\partial x} & 0 \\
+      \frac{\partial p_i}{\partial z} & 0 &
+      \frac{\partial p_i}{\partial y} \\
+      \frac{\partial p_i}{\partial z} & 0 & \frac{\partial h_i}{\partial x}
+    \end{array}
+    \right].
+\end{equation}
+
+Further as pointed out by R. L. Taylor et al. in \cite{incomp2} in
+order for the elements to pass the patch test $G$ should not influence
+the volume of the element. The calculation of $G$ requires just as the
+calculation of $B$ terms that result from the inverse Jacobian
+\ref{eqn-jacobien}. The trick here is to take the Jacobien at the
+center of the element, at $\xi=\eta=\zeta=0$ calculating
+$\frac{\partial p_i}{\partial x}$, $\frac{\partial p_i}{\partial y}$
+and $\frac{\partial p_i}{\partial z}$.
+Symbolically written down to be:
+\begin{equation}
+  \left[\begin{array}{c}
+      \frac{\partial p_i}{\partial x} \\
+      \frac{\partial p_i}{\partial y} \\
+      \frac{\partial p_i}{\partial z}
+    \end{array}\right]
+  =
+  J^{-1}|_{\xi=\eta=\zeta=0}
+  \left[\begin{array}{c}
+      \frac{\partial p_i}{\partial \xi} \\
+      \frac{\partial p_i}{\partial \eta} \\
+      \frac{\partial p_i}{\partial \zeta}
+    \end{array}\right]
+  \frac{|J(\xi=\eta=\zeta=0)|}{|J(\xi,\eta,\zeta)|},
+  \label{eqn-j-null}
+\end{equation}
+with the correction factor $\frac{|J(\xi=\eta=\zeta=0)|}{|J(\xi,\eta,\zeta)|}$.
+
+The bubble functions $p$ shall in no further way influence the coordinate
+transformation and hence, the jacobian is
+always calculated by use of the classical shape functions
+(\ref{eqn-shape}). The jacobian is always varied when used
+in evaluating $B$ or as a determinant in the volume element $dV$ of
+equation. It is only kept constant $\xi=\eta=\zeta=0$ at calculating the partial
+derivatives:
+$\frac{\partial p_i}{\partial x}$, $\frac{\partial p_i}{\partial y}$ and
+$\frac{\partial p_i}{\partial z}$ for equation  
+(\ref{eqn-stiffness-and-virtual}) using (\ref{eqn-j-null}).
+
+Static condensation now consists of matrix coefficient
+modification. Looking at equation (\ref{eqn-stiffness-and-virtual})
+the trick here is to turn the lower part into the identity
+matrix. Hence, the system takes the form:
+\begin{equation}
+  K^* = \left[\begin{array}{cc}
+      \left[\int_V(B^{T}D B)dV\right]_{G-inc} & 0 \\
+      0 & I
+    \end{array}\right],
+  \label{eqn-static-cond}
+\end{equation}
+where using partial guassian elemination the lower part is transfomed
+into the identity matrix $I$ modifying the coefficients in the
+$\int_VB^{T}DB dV$ part of the matrix, incorporating the virtual stress-strain
+terms in the matrix \cite{static-cond}. Looking at equation $K_{ij} u_j = F_i$
+(\ref{eqn-force-displacement}) this is possible as we are not
+interested in virtual displacements $a$ that as the force acting on
+this points can only be $0$ as we only let the force act on real
+nodes. $K^* = \left[\int_V(B^{T}D B)dV\right]_{G-inc}$ for local
+elementary stiffness matrices can then due to linearity directly
+summed into the global stiffness matrix at positions effecting the
+correct nodal displacemnts $u$.
+
+The static condensation algorithm further also impacts the strain-displacement
+relation, $B$. E. L. Wilson noted this \cite{static-cond} and provided
+an algorithm in order to manipluate the stress-displacement relation
+denoted in the paper as $A$. In our tests the implementation shown
+however did not result in the same results as ANSYS would print
+out. We hence, based ourselfs on a different method noting that the
+static condensation can be seen expressed as the application of a
+matrix $M$ in such that: 
+\begin{eqnarray}
+  K^* = MK &=& M \left[\begin{array}{cc}
+      \int_V B^{T}DB dV & \int_V B^{T}DG dV \\
+      \int_V(B^{T}DG)^{T} dV & \int_VG^{T}DG dV
+    \end{array}\right] \nonumber \\ 
+     &=& \left[\begin{array}{cc}
+      \left[\int_V(B^{T}D B)dV\right]_{G-inc} & 0 \\
+      0 & I
+    \end{array}\right] , \label{eqn-partial-inverse}
+\end{eqnarray}
+as we can see from equations
+(\ref{eqn-stiffness-and-virtual},\ref{eqn-static-cond}). M is thus a
+partial inverse of the matrix $K$ which can be obtained by
+the traditional gauss jordan elemination method with an extended 
+identity matrix. The only difference is here that the elemination is
+stopped once the lower left section of $K$ given by $\int_VG^{T}DG dV$
+is transformed into the identity matrix.
+
+Knowing $M$, the condensated $B$ used for further stress $\epsilon$ or
+strain $\sigma$. These evalutions can be obtained using the following
+formula:
+\begin{equation}
+  B^T_{G-inc}= M[B G]^T,
+\end{equation}
+where $[B G]$ discribes the a 33 by six matrix which contains $B$
+extended by $G$ components. Matrix multiplaction can be stopped so
+that $B_{G-inc}$ results in a 24 by six matrix. The static condensation
+\cite{static-cond} paper evokes that this step could be done without
+the matrix multiplication, and by deducing the values directly during
+the Gauss Jordan elemination process. As $[B G]$ changes for every
+point in an element $M$ stays static. Performing the reduction during
+the elemination process would have meant to change the eight $B$
+matrices for one element at the same time. We believe that it is more
+advantageous and intuitive to store this information once in matrix
+$M$.
+
+\subsection{Integration, Volume and Mean}
+
+Integration in all our equations is effectuated using a gaussian
+quadrature approximation, in the $\xi$, $\eta$, $\zeta$ coordinate
+system. Integration over an element is thus numerically performed in the
+follow way: 
+\begin{eqnarray}
+  \int_V A(x,y,z) dV &=& \int_{-1}^{1}\int_{-1}^{1}\int_{-1}^{1} A(\xi,\eta,\zeta)
+  |J| d\xi d\eta d\zeta \nonumber \\
+  &\approx& \sum_{i=1}^8 A(r_i) |J(r_i)|,
+\end{eqnarray}
+where $|J|$ is the determinant of the Jacobian. $A$ is scalar, vector
+or tensor field to be integrated and $r_i$ are the gaussian quadrature
+points found to be:
+\begin{eqnarray}
+  r_1&=& \frac{1}{\sqrt{3}}[-1,-1,-1]^T \nonumber \\
+  r_2&=& \frac{1}{\sqrt{3}}[1,-1,-1]^T \nonumber \\
+  r_3&=& \frac{1}{\sqrt{3}}[1,1,-1]^T \nonumber \\
+  r_4&=& \frac{1}{\sqrt{3}}[-1,1,-1]^T \nonumber \\
+  r_5&=& \frac{1}{\sqrt{3}}[-1,-1,1]^T \nonumber \\
+  r_6&=& \frac{1}{\sqrt{3}}[1,-1,1]^T \nonumber \\
+  r_7&=& \frac{1}{\sqrt{3}}[1,1,1]^T \nonumber \\
+  r_8&=& \frac{1}{\sqrt{3}}[-1,1,1]^T.
+\end{eqnarray}
+in $\xi$, $\eta$, $\zeta$ coordinates. Using this numerical approximation
+the volume of a hexahedral cell casts into:
+\begin{equation}
+  V = \sum_{i=1}^8 |J(r_i)|
+\end{equation}
+In order to obtain numerical compatibility stress and strain are
+values are currently exempt from this procedure and are simply
+meaned without taking the volume into account and hence, are given by:
+\begin{equation}
+  \bar{\epsilon} = \frac{1}{8}\sum_{i=1}^8\epsilon(r_i).
+\end{equation}
+
+\subsection{Solution of a Linear System}
+
+The system to be solved is in general a linear sparse symmetric
+system, as highlighted by equation (\ref{eqn-force-displacement}).
+
+As a linear, operator in our case the $n$ by $n$ stiffness matrix $K$, forms an
+inner product. Hence, one can define a base of $n$ dimensional space
+associated with this inner product. Let us denote:
+\begin{equation}
+  {p_1,p_2,\ldots,p_n},
+\end{equation}
+a set of orthonormal vectors in respect to the inner product:
+\begin{equation}
+  \left<u|v\right>_K = u^{T}Kv
+\end{equation}
+to be a base of our $n$ dimensional space. We can then develop a
+solution for our problem $Ku=F$, in this base:
+\begin{equation}
+u = \sum_{i=1}^n\alpha_ip_i
+\end{equation}
+and further:
+\begin{eqnarray}
+  Ku&=&\sum_{i=1}^n\alpha_i Kp_i \\
+  p^{T}Ku&=&\sum_{i=1}^N\alpha_ip_k^{T}Kp_i \\
+  p_k^{T}F&=&\sum_{i=1}^N\alpha_i\left<p_k|p_i\right>_K \\
+\end{eqnarray}
+from where we obtain, the coefficients:
+\begin{equation}
+  \alpha_k=\frac{p_k^{T}F}{p_k^{T}Kp_k}
+\end{equation}
+which means that a solution for $u$ can be found in finding a set of
+orthonormal (conjugate) vectors according to our $n$ dimensional space
+with the inner product defind by the stiffness matrix, and further
+calculating the coefficients $\alpha_k$.
+
+Using this as an iterative method in our case we define a residual at
+step $k$ to be:
+\begin{equation}
+  r_k = F - Ku_k.
+\end{equation}
+From where, like at Gram Schmitt Orthonormalisation we want to find a
+vector normal on the previous vectors:
+\begin{equation}
+p_k = r_k - \sum_{i<k}\frac{p_i^TKr_k}{p_i^TKp_i}p_i.
+\end{equation}
+The improved solution is then given by:
+\begin{equation}
+  u_{k+1} = u_{k}+\alpha_kp_k.
+\end{equation}
+This works as due to the normalisation step $p_k$ is orthogonal to
+$u_{k-1}$, according to the inner product defined by $K$.
+
+As $r_{k+1}$ is in fact orthogonal to all $p_i$ the sum is not needed
+and the algorithm can be very efficiently implemented by only knowing
+previous $r_k$,$p_k$, and $u_k$. We initialize with:
+\begin{eqnarray}
+  r_0&=&F - Ku_0, \\
+  p_0&=&r_0, \\
+\end{eqnarray}
+use the recurrence relations:
+\begin{eqnarray}
+  \alpha_k&=&\frac{r_k^{T}r_k}{p_k^{T}Kp_k}, \label{eqn-rec-1} \\
+  u_{k+1}&=&u_{k}+\alpha_kp_k, \label{eqn-rec-2} \\
+  r_{k+1}&=&r_k - \alpha_kKp_k, \label{eqn-rec-3} \\
+  \beta_k&=&\frac{r_{k+1}^Tr_{k+1}}{r_k^Tr_k}, \label{eqn-rec-4} \\
+  p_{k+1}&=&r_{k+1}+\beta_kp_{k} \label{eqn-rec-5},
+\end{eqnarray}
+and repeat until $r_k$ is sufficiently small. The convergence of the
+algorithm outlined here largely depends on the properties of the
+system to be solved. In order to speed up convergence a so called
+preconditionning matrix $M$ can be used which results in the solution
+of the equivalent linear system:
+\begin{eqnarray}
+  E^{-1}K(E^{-1})^T\hat{u}&=&E^{-1}F, \\
+  EE^{T}&=&M, \\
+  \hat{u}&=&E^Tu.
+\end{eqnarray}
+This changes the algorithm outlined above to an initialisation using:
+\begin{eqnarray}
+  r_0&=&F - Ku_0, \\
+  z_0&=&M^{-1}r_0 \\
+  p_0&=&z_0, \\
+\end{eqnarray}
+and the recurrence relations to:
+\begin{eqnarray}
+  \alpha_k&=&\frac{r_k^{T}z_k}{p_k^{T}Kp_k}, \label{eqn-recm-1} \\
+  u_{k+1}&=&u_{k}+\alpha_kp_k, \label{eqn-recm-2} \\
+  r_{k+1}&=&r_k - \alpha_kKp_k, \label{eqn-recm-3} \\
+  z_{k+1}&=&M^{-1}r_{k+1}, \label{eqn-recm-4} \\
+  \beta_k&=&\frac{z_{k+1}^Tr_{k+1}}{z_k^Tr_k}, \label{eqn-recm-5} \\
+  p_{k+1}&=&z_{k+1}+\beta_kp_{k} \label{eqn-recm-6},
+\end{eqnarray}
+The preconditioning matrix $M$ can be more or less complicated. In
+the optimal case $M^{-1}$ would be the inverse of $K$. In
+our implemented algorithm we used the so called Jacobi precontionning
+method setting $M$ to the diagonal of $K$, and 0 elsewhere. Even
+though this method is almoast trivial and straightforward to
+implement it is suggested to be one of the fasted methods on SIMD (vector)
+systems \cite{precond}.
+

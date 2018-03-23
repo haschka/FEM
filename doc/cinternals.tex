@@ -1,0 +1,389 @@
+\chapter{Code Algorithms}
+
+In this chapter we make some remakes about how things are organised
+in the current program, which data structures we use, and which
+choices we had to make during the implementation in order to save
+memory and computational time.
+
+Further the code shall be well anotated using doxygen processable
+annotations. This should help you adapting the code to your needs and
+to understand in great detail each function that is implemented in
+this code. 
+
+Currently the program consists of the following different code files.
+
+\begin{itemize}
+  \item mesh\_from\_file.c: This file contains the implementation of
+    the input file parser, and the code to create the internal data
+    structures from the input file.
+  \item shape\_func.c: The definitions of the shape as well as the
+    bubble functions is found within this file. Further the partial
+    derivatives in both $\xi$,$\eta$,$\zeta$ and $x$,$y$,$z$ space
+    are defined here.
+  \item matrix\_math.c: This file contains small helper functions in
+    order to calculate the determinants, the inverses and eigenvalues
+    of three by three matrices, which comes handy as we calculate the jacobian.
+  \item node\_shuffle.c: This file generates hints on structural information of
+    the global stiffness matricies, that are needed later on for correct memory
+    allocation etc. This is done using so called index matricies.
+  \item sparse\_matrix.c: Herein one finds all functions that implement
+    sparse matricies in this algorithm.
+  \item stiffness\_matrix\_for\_element.c: All the code in order to
+    calculate the stiffness matrix for a single element is found
+    here. This includes the Jacobian matrix, the strain displacement
+    as well as the stress strain relation. Further the virtual strain
+    displacement relation that is caused by the bubble functions can be
+    found in this file.
+  \item global\_stiffness\_matrix.c: This code works with the global
+    stiffness matrix, constructed from summing the elementary stiffness
+    matrix into this global matrix.
+  \item post\_processing.c: In this file all the post processing code
+    is found. Currently this includes the elementary volume,
+    strain calculation and principal strains.
+  \item cg\_* These files implement the conjugate gradient solver on different
+    SIMD architectures and in scalar form.
+\end{itemize}
+    
+\section{Data Structures}
+
+When the program starts the input file is read and the mesh and
+boundary conditions are translated into the programs internal data
+structures that we outline in the following.
+
+We start listing the node structure:
+\lstset{language=c,caption={Node structure},label=lst-node-struct}
+\begin{lstlisting}
+typedef struct {
+  int id;      /*!< The node id as stated in the input file */
+  int fixed;   /*!< 0 this node has three degrees of freedom 1 has none */
+  double x[3]; /*!< The initial positions as read from the input file */
+  double u[3]; /*!< The displacements of each node */
+  double f[3]; /*!< The forces applied to these nodes (fixed ones) */
+} node;
+\end{lstlisting}
+where displacements and forces at fixed nodes are not defined at
+input, but calculated during the FEM process. These values are then
+further used for post-processing. 
+
+The next structure to be outlined is the element structure which has
+the following form:
+\lstset{language=c,caption={Element structure},label=lst-element-struct}
+\begin{lstlisting}
+typedef struct {
+  int* node_ids;               // node ids as in input file in element
+  int* node_indicies;          // node array indicies
+  double E_modulus;            // E modulus ( if available ) 
+  double G_modulus;            // G modulus ( if available ) 
+  double poisson_number;       // poisson_number if available
+} element;                    
+\end{lstlisting}
+As each element is built out of eight nodes we store their ids in the
+node\_ids array. A difference does exist between node\_ids and
+node\_indices in that the indices are the actual array indices in
+the structure structure which follows later on. This allows for rapid
+memory access to these nodes. E modulus and G modulus are the
+elasticity and shear modulus. The poisson\_number is
+read just as the E\_modulus directly from the input
+file. 
+
+Finally we have the structure super structure which points to the
+node and element structure arrays and hence, allows us to pass the
+whole object to be investigated during our finite element calculation
+in a very simple fashion. This structure is defined in the following
+way:
+\lstset{language=c,caption={Structure structure},label=lst-structure-struct}
+\begin{lstlisting}
+typedef struct {
+  node* nodes;       /*!< array of nodes */
+  element* elements; /*!< array of elements */
+  int n_nodes;       /*!< number of nodes */
+  int n_elements;    /*!< number of elements */
+  postprocessed_outputs outputs; /*!< structure telling what to output*/
+} structure;
+\end{lstlisting}
+
+\section{Sparse Matrix Implementation}
+
+In order for our program to be efficient we needed to have an
+efficient sparse matrix implementation. In general sparse matrices
+are implemented with three arrays of row indices, colomn indices and
+associated values where zeros are by definition not stored. A big
+problem is hence finding the value in these arrays that is associated
+to a given row and column index. In our implementation we use a binary
+matrix which stores in a very efficient manner only 0 and 1 to avoid
+the lookup of undefined values. Further we use sorting to order our
+sparse matrices and a bisection algorithm for efficient value lookup. This
+method improved the speed of the algorithm by several magnitudes
+compared to initially implemented linear search.
+
+\subsection{Sparse matrix strucutre}
+
+Sparse matrices are defined by the following structure:
+\lstset{language=c,caption={Sparse matrix
+    structure},label=lst-sparse-struct}
+\begin{lstlisting}
+typedef struct {
+  int range;         /*!< range of the square sparse matrix*/
+  int non_zeros;     /*!< number of non zero entries in the square sparse m*/
+  int triangle_type; /*!< 0 = both triangles, 1 = upper -, 2 lower trianlge */
+  int* row_indicies; /*!< row indicies array*/
+  int* col_indicies; /*!< column indicies array*/
+  double* values;    /*!< values array*/
+  int has_eye;       /*!< does the matrix have a binary index */
+  int has_node_eye;  /*!< does the matrix have a binary index per node (3x3) */
+  char* eye;         /*!< the pointer to the binary eye*/
+  char* node_eye;    /*!< the pointer to the node eye*/
+} sparse_matrix;
+\end{lstlisting}
+where range is the range of the matrix (all our sparse matrices are
+square matrices). non\_zeros is the internally computed number of non
+zero elements in the matrix. Triangle\_type is currently not used
+in our program, but could further improve the speed and memory
+footprint in storing only half sparse matrices. Then we have an eye
+and a node eye. The difference here is that the node eye only stores
+the binary information taking nodes into account the binary matrix
+hence has a range of only one third of the range of the complete
+matrix, which further can save memory in certain conditions. Eye is
+the eye where a binary index exists for the whole matrix.
+
+\subsection{Binary Sparse Eye}
+
+The smallest defined data type by C standards up to C11 is the
+character. Which on most platforms is a 8 bit integer value. Using
+the character value setting it to 1 or 0 is hence very memory
+inefficient, as we would store eight bits for a single binary
+value. We hence use C's binary operators, currently on the character
+data type to access all binary values. In the future we might switch
+to an other data type, staying with the same schemes as the retrieval
+and manipulation of special integer data types shall be way faster
+then the character data type. Let us sketch how this actually works
+highlighting the retrieval function for a binary value.
+\lstset{language=c,caption={retrieval of a binary value},label=lst-binary-value}
+\begin{lstlisting}
+int get_value_in_binary_index_at_index(char* bin_index_matrix, long index) {
+
+  char small_index;
+  int module = index%(sizeof(char)*8);
+  int location = index/(sizeof(char)*8);
+
+  small_index = (char)1 << module;
+
+  return (small_index == (bin_index_matrix[location] & small_index));
+}
+\end{lstlisting}
+This function has two arguments the matrix where to retrieve the
+binary value in, and the index where to lookup if we have a value at
+this point or whether the matrix element equals to zero. The index is
+composed in the typical
+$\mathrm{index}=\mathrm{row}*\mathrm{range}+\mathrm{column}$
+linearization formula that is used everywhere throughout our code. As
+we use the character data type here we can only retrieve eight binary
+values at the same time. We divide the index by eight in order to find
+the correct array offset from where to recover these eight binary
+values. Then we take the modulus of the index which highlights the actual
+element of the eight retreaved values to be investigated. We use
+the binary shift left operator in combination with the modulus in
+order to generate eight bits with a 1 at the position that we want to
+investigate. In the code sample highlighted in listing
+\ref{lst-binary-value} this value is stored in small\_index. Once this
+is done we use the binary \emph{and} operator and compare its result
+to the number generated. If the numbers are the same, which means
+that 1 occurs at the position to be investigated this comparison yields true (
+integer 1 in C terminology) and false (integer 0) if 0 occurs at this
+postion. One has to note that the usage of binary operators is in
+general very fast on the processor and thus this method of storing
+where a non zero value does occur or not does not have a significant overhead,
+but is necessary as it allows us to save 
+memory at large systems and speed up value lookup inside the sparse
+matrix by eliminating zero lookups beforehand. 
+
+\subsection{Sparse Matrix Value Lookup}
+If the binary eye yields that a non zero value is stored at an indexes
+position the value has to be fond in the arrays as fast as possible. In
+order to do this we order the matrix by the indices. This is done using the
+qsort() function which is part of the C standard library since the C89
+standard, and shall sort our values at reasonable speed. For the
+detailed implementation the reader shall be refered to the programs
+source code. Once the matrix is sorted a bisection algorithm
+searches in the arrays of values for the correct index.
+
+\section{Adaptation of the static condensation algorithm}
+The static condensation algorithm has been adapted to our problem. In
+our code the static condensation algorithm is applied as the stiffness
+matrix is calculated for each element before it is added to the global
+stiffness matrix $K$. Edward L. Wilson \cite{static-cond} provides
+some fortran code with his algorithm, implementing this partial gauss
+elimination efficiently. In our case, as there are no forces acting
+where the virtual displacements do happen (they are not even
+attributed to a node), the system is even less complex
+as we do not have to take care of the right hand side of our equation
+system. Further Edward L. Wilson highlights an algorithm that inverts
+the upper left corner of the matrix acting onto the lower right portion of the
+matrix. As we have to add the elementary matrix to the global
+stiffness matrix afterwards this would be inefficient as memory
+offsets in order to locate the lower right portion would be more
+complicated to calculate then transfering values from the start of the
+arrays. Hence, we modified the algorithm to invert the lower right
+portion of the matrix and have it act on the upper left portion of the
+matrix, as shown in equation \ref{eqn-static-cond}. Our implementation
+is listed in the following code snippet:
+\lstset{language=c,caption={Static condensation implementation},label=lst-static-cond}
+\begin{lstlisting}
+void condensate(double* k) {
+    
+  int i,j,key;
+  double key_val;
+    
+  for(key=32;key>23;key--) {
+    key_val = k[key*33+key];
+    for(i=0;i<key;i++) {
+      k[key*33+i] /= key_val;
+      for(j=0;j<key;j++) {
+	k[j*33+i] -= k[j*33+key]*k[key*33+i];
+      }
+    }
+  }
+}
+\end{lstlisting}
+where key\_val is the value in the lower left diagonal of the row key
+currently used to modify coefficients in the upper left diagonal of
+the matrix. We also notice that each elementary stiffness matrix is
+reduced from 33 (24 nodal degrees of freedom and nine from the bubble
+functions) to 24 degrees of freedom.
+
+In order to calculate strains and stresses accordingly from a modified
+strain-displacement relation we had to implement a static condensation
+algorithm that allows us to obtain the partial inverse of $K$ denoted
+$M$ (\ref{eqn-partial-inverse}). This results in a more generalized
+Gauss elimination procedure that is only used if stresses $\sigma$
+or strains $\epsilon$ are calculated. The current implementation is
+shown below and can probably be optimized as large parts of the
+inverse are not modified.  
+\lstset{language=c,caption={Static condensation with partial invers implementation},label=lst-static-cond-inv}
+\begin{lstlisting}
+double* condensation_inverse(double* m) {
+
+  int i,j,k;
+  double key_value;
+  double row_divisor;
+
+  int range = 33;
+    
+  double* in = (double*)malloc(sizeof(double)*1089);
+
+  memset(in,0,1089*sizeof(double));
+    
+  for(i=0;i<33;i++) {
+    in[i*33+i] = 1.;
+  }
+  
+  for(i=32;i>23;i--) {
+    key_value = m[i*range+i];
+    for (j=0;j<range;j++) {
+      m[i*range+j] /= key_value;
+      in[i*range+j] /= key_value;
+    }
+    for (j=0;j<i;j++) {
+      row_divisor = m[j*range+i];
+      for (k=0;k<range;k++) {
+	m[j*range+k] -= row_divisor*m[i*range+k];
+	in[j*range+k] -= row_divisor*in[i*range+k];
+      }
+    }
+    for (j=i+1;j<range;j++) {
+      row_divisor = m[j*range+i];
+      for (k=0;k<range;k++) {
+	m[j*range+k] -= row_divisor*m[i*range+k];
+	in[j*range+k] -= row_divisor*in[i*range+k];
+      }
+    }
+  }
+  return(in);
+}
+\end{lstlisting}
+
+\section{Conjungate Gradient Structure}
+The conjugate gradient needed to calculate the matrix vector product
+$Kp_k$ as shown in equations (\ref{eqn-rec-1}) and (\ref{eqn-rec-2}). To
+calculate this matrix vector product efficiently a standard lookup 
+for the values in the sparse matrix even with the algorithms discribed
+above would be to slow. Hence we transform the matrix into $N =
+(\mathrm{range of the matrix})$ integer and flaoting point arrays for
+each row of the matrix. In each flaoting point array we then store the
+values of the row, while we store its index in the integer.
+This will come to our advantage computing the dot product as it can be
+evaluated very quickly looping accross both arrays, using the index
+array to gather the corresponding value of the vector the matrix is
+multiplied onto. We further create an array
+containing the number of values for each row (in order to know when
+the loop for each row should stop). The structure is most
+straightforward understood by looking at the code that implements it:
+\lstset{language=c,caption={Conjugate gradient acceleration
+    structure},label=lst-grad-struc}
+\begin{lstlisting}
+  double** value = (double**)malloc(r_size*3*sizeof(double*)); // values in rows
+  int** index = (int**)malloc(r_size*3*sizeof(int*)); // row indicies
+  int* index_size = (int*)malloc(r_size*3*sizeof(int)); // n values in rows
+
+  double* current_values; // pointer to get offsets out of the loops
+  int* current_indicies;
+  
+  double* force = create_reduced_force_vector(object);
+  double * reduced_displacements = (double*)malloc(sizeof(double)*r_size*3);
+    
+  memset(reduced_displacements,0,sizeof(double)*r_size*3);
+
+  double * z = (double*)malloc(sizeof(double)*r_size*3);
+  
+  // A = x b notation is used in the following
+
+  A = reduced_stiffness_matrix;
+  b = force;
+  x = reduced_displacements;
+
+  A.eye = create_sparse_eye(A);
+  A.has_eye = 1;
+  
+  // To speed up computation create index accessors;
+
+  for(i=0;i<r_size*3;i++) {
+    value[i] = (double*)malloc(r_size*3*sizeof(double));
+    index[i] = (int*)malloc(r_size*3*sizeof(int));
+    k=0;
+    for(j=0;j<r_size*3;j++) {
+      if(get_value_in_binary_index_at_index(A.eye,(long)i*(long)r_size*3+j)
+	 == 1) {
+	value[i][k] = get_value_from_sorted_sparse_matrix(A,j,i);
+	index[i][k] = j;
+	k++;
+      }
+    }
+    index_size[i] = k;
+    value[i] = (double*)realloc(value[i],k*sizeof(double));
+    index[i] = (int*)realloc(index[i],k*sizeof(int));
+  }
+\end{lstlisting}
+
+In order to speed up the conjugated gradient iterations almoast all
+instructions within the loop have been coded using intrisics instructions.
+Two versions, one using AVX2 instructions and one using SSE3 instructions,
+has been programmed. On an Intel Core i7 4771 processor it was found
+that the SSE3 based version proved to be the fasted one. This might be
+due to the slow gather instruction (load data into a 256 bit AVX register from
+arbitrary memory locations), that might improve in successive
+processor generations. A scalar reference implementation is
+nevertheless provided that and as such allows for portability to
+platforms/compiliers missing these instructions/intrinsics.
+
+The default compilier flags in the make file should automatically
+select the right SIMD architecture apropriate for the processor the
+program is build on. 
+
+\section{Eigenvalues and Principal Strains}
+
+As we wanted to have a library and operating system indipendent
+solution, we had to write a eigenvalue routine in order to obtain the
+principal stresses given for a specific element. The characteristic
+polynome yielding the eigenvalues of the strain tensor is computed
+using the well known inverse tangent method, that is for instance
+outlined in the following paper \cite{eigval}. 

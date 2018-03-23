@@ -1,0 +1,109 @@
+\documentclass[12pt,a4paper]{book}
+
+%load some useful latex packages
+\usepackage{alltt}    %tt mode for sequences etc
+\usepackage{lscape}   %landscape mode
+\usepackage[ngerman,english,french]{babel} % set the amazing french language
+\usepackage{fontspec} %use all fonts
+\usepackage{titlesec} %redefine title
+\usepackage{fancyhdr} %fancy headers 
+\usepackage{xcolor}   %colors
+\usepackage{graphicx} %graphics
+\usepackage{amsfonts} %more sophisiticated math symbols
+\usepackage{siunitx}  %alignement in tables
+\usepackage{listings} %use code listings
+\usepackage[nottoc,numbib]{tocbibind} %add bibliography to TOC
+
+%load some useful colors
+%able to read on white
+%blue
+\definecolor{a-aqua}     {rgb}{0,0.5,1}      
+%red
+\definecolor{a-salmon}   {rgb}{1,0.4,0.4}
+%green
+\definecolor{a-flora}    {rgb}{0.4,1,0.4}
+%purple
+\definecolor{a-lavender} {rgb}{0.8,0.4,1}
+%orange
+\definecolor{a-tangerine}{rgb}{1,0.5,0}
+%gray
+\definecolor{a-aluminium}{rgb}{0.6,0.6,0.6}
+%brown
+\definecolor{a-mocha}    {rgb}{0.5,0.25,0}
+%unable to be clearly read on white
+\definecolor{a-sky}      {rgb}{0.4,0.8,1}
+\definecolor{a-banana}   {rgb}{1,1,0.4}
+
+\lstset{
+  basicstyle =\scriptsize\ttfamily,
+  showspaces = false,
+  showstringspaces = false, 
+  showtabs = false, 
+  captionpos =b, 
+  keywordstyle = \color{a-aqua},
+  commentstyle = \color{a-flora},
+  stringstyle = \color{a-salmon}
+}
+
+
+%Basic font layout
+%\setsansfont{DejaVu Sans}
+%\setmainfont{DejaVu Serif}
+%\setmonofont{DejaVu Sans Mono}
+
+%\newfontfamily\chapterfont{DejaVu Sans ExtraLight}
+
+%titles
+%\titleformat{\chapter}[hang]{\Huge\chapterfont\color{a-aqua}}{\thechapter\hspace{5mm}{-}\hspace{5mm}}{0pt}{\Huge\chapterfont\color{a-aqua}}
+%\titleformat*{\section}{\Large\sffamily\color{a-aqua}}
+%\titleformat*{\subsection}{\large\sffamily\color{a-aqua}}
+%\titleformat*{\subsubsection}{\sffamily\color{a-aqua}}
+
+%Headers and footers
+\pagestyle{fancy}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\lhead[]{\scriptsize\leftmark}
+\rhead[\scriptsize\rightmark]{}
+\lfoot[]{\scriptsize\thepage}
+\rfoot[\scriptsize\thepage]{}
+\cfoot[]{}
+
+\fancypagestyle{plain}{
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\lfoot[]{\scriptsize\thepage}
+\rfoot[\scriptsize\thepage]{}
+}
+
+%hyphenation
+\hyphenation{
+meth-yl-a-cet-a-mide
+mol-e-cule
+mol-e-cules
+}
+
+\begin{document}
+
+\selectlanguage{english}
+%table of contents
+\tableofcontents
+
+%redefine openleft
+\makeatletter
+\renewcommand*\cleardoublepage{\clearpage\if@twoside
+  \ifodd\c@page \hbox{}\newpage\if@twocolumn\hbox{}%
+  \newpage\fi\fi\fi}
+\makeatother
+
+%inputs of the actual chapters
+\input{intro}
+\input{userguide}
+\input{algorithms}
+\input{cinternals}
+
+\bibliography{bib.bib}{}
+\bibliographystyle{vancouver}
+
+\end{document}

@@ -1,0 +1,42 @@
+\chapter{Introduction}
+
+Welcome to the Manual of the Hexaheadral Finite Element Solver (hexfem).
+The program implements a hexahedral element with incompatible displacement
+modes \cite{incomp1, incomp2}. The hexahedral element implemented is
+strictly ressembling the ANSYS \emph{Solid 45} element. This program
+shall serve both as an educational tool to teach about the concepts of
+a finite element solver as well as its numerical implemetation. As
+such the code was designed to be short and efficent. It does not use
+any external libraries besides the C library. It implements the finite
+elements, a sparse matrix system, and a sparse matrix conjugate
+gradient with jabocbi preconditioning. The solver is further available
+in vectorized forms for the SSSE3 and AVX2 instruction sets found on
+computers using the X86\_64 instruction set. \newline \newline
+The following manual has three sections:
+\newline \newline
+\begin{enumerate}
+\item{Basic Usage: All the necessary to use this finite element
+  solver, without thinking to much about it.}
+\item{Theory: The theory that makes such a tool possible. This shall
+  not serve as a finite element course replacement but rather as a
+  summery of what is implemented herin, and provide an overview of
+  what is necessary to get such a tool baked together.}
+\item{Code Algorithms: Some hints for those who want to mess with the
+  code of this tool, expand it, modify it for their own purpose.}
+\end{enumerate}
+\newpage
+The license of the software:\\ \\
+(c) 2016 Thomas Haschka\\ \\
+This software is provided 'as-is', without any express or implied
+warranty. In no event will the authors be held liable for any damages
+arising from the use of this software. \\
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions: \newline
+The origin of this software must not be misrepresented; you must not
+claim that you wrote the original software. If you use this software
+in a product, an acknowledgment in the product documentation would be
+appreciated but is not required.\newline
+Altered source versions must be plainly marked as such, and must not
+be misrepresented as being the original software. \newline
+This notice may not be removed or altered from any source distribution.

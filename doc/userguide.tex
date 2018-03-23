@@ -1,0 +1,166 @@
+\chapter{Basic Usage}
+
+Within this chapter you will find all the necessary to install and use
+this tool for your own problems. This tool implements the very basic
+of Finite Element Theory, and only one specific element so
+far. Nevertheless you might find it interesting to use if for your own
+purposes. The author however encorages you to read at least the theory section
+in order to know what you are actually doing. 
+
+\section{Installation - Compiling the code}
+
+\subsection{On GNU-Linux/BSD/Unix Systems}
+
+The program has been programmed with portablitiy in mind. As this is
+kind of an educatinal tool incorporating every thing one needs to make
+a finite element calculation this tool does not require any external
+library besides a standard C library.
+
+In order to install the program one currently needs, make ( GNU make
+4.1 has been tested ), a suiteable c compilier ( gcc 4.9.3 and clang
+3.5.0 have been tested ), and c library ( glibc 2.21 has been
+tested).
+
+The supplied makefile can be adapted to suite compilier and necessary compilier
+flags on your system and should work out of the box on common GNU/Linux
+systems having the listed libraries installed.
+
+Issuing make in the directory containing this program should suffice
+to build the hexfem binary.
+
+\subsection{On Windows}
+
+Windows binaries can be compiled using the MingW64 toolchain.
+
+\section{The hexfem input file}
+
+Runnig this program, an input file is required. The input file is
+modeled after the ANSYS input file syntax but has some significant
+differences that are outlined below.
+The input file has to be composed of the following statements:
+\begin{itemize}
+\item {\tt N, [node\_ID], [X], [Y], [Z]} \\
+      Node definition: Defines a node in the the mesh with a
+      corresponding unique identifier
+      [node\_ID], at the coordinates [X], [Y], [Z].
+      Each node can only to appear once in the input file. Double
+      definitions where the last definition is taken into account as
+      in ANSYS are not implemented and result in corrupt results. A
+      node has to be defined before
+      force or constraint definitions acting on that node. 
+\item {\tt Mat, [material\_ID]} \\
+      Material pointer: points to a material with a unique id. Each
+      material pointer can only be defined once. Double usage of the
+      same statements is per se not allowed in the input file. The
+      latest material pointer in front of an
+      element specification is used in order to attribute the
+      corresponding material to that element.
+\item {\tt MP, EX, [material\_ID], [value]} \\
+      Young's modulus: Defines the Youngs modulus of the material
+      indicated by the [material\_ID] statement. A young's modulus
+      can be located anywhere in the input file. Materials are so far
+      limited to an istropic Youngs modulus, and hence the EX field
+      is valid for all directions.
+\item {\tt MP, NUXY, [material\_ID], [value]} \\
+      Poisson's ratio: Defines Poisson's ratio of the
+      material. Such statement can
+      just as the Young's modulus be defined anywhere within the input
+      file. Due to isotropicity
+      the NUXY field defines the Poisson's ratio for all directions.
+\item {\tt E, [N], [N], [N], [N], [N], [N], [N], [N]} \\
+      Element definition: Defines a hexahedral element using the nodes
+      [N], where [N] is the [node\_ID] of a node defined in the input
+      file. Each element 
+      specification obtains the material indicated by a Material
+      pointer in front of it. Otherwise these statements can be placed anywhere
+      in the input file.
+\item {\tt D, [node\_ID], ALL, 0}
+      Displacement constraint: Defines a constraint on a
+      node. Currently only removing all degrees of freedom and hence,
+      fixing a nodes position is implemented. The statement
+      requires the node with [node\_ID] to be already defined.
+\item {\tt F, [node\_ID], [Direction], [value]}
+      Force definition: Defines the external force to be applied on a
+      node.
+      The [Direction] field can be any of FX, FY, FZ in order to specify specfic
+      components. This statement can only occur after the node with
+      [node\_ID] has been specified in the input file.
+\item {\tt ZOU, [specification]}
+      Output specification: Defines the values shall be calculated
+      and printed.
+      The [specification] field can currently be any of: DIS for nodal
+      displacemnts, FOR for forces exercised on nodes, STE for an
+      output of a strain tensor for each element, PST for an output of
+      principal strains for each element, VOB for the volumes of each
+      element before deformation and VOA for the volumes of each
+      element after deformation. VOA, VOB, STE and PST are requiring
+      additional computational time, while DIS and FOR are always calculated,
+      but not printed if the statements are missing.
+      
+      
+\end{itemize}
+
+A sample input file is shown in listing \ref{lst-input-file}.
+\lstset{language=,caption={Input file containing a brick made up of two
+    elements that is locked at its base and under load from the
+    top},label=lst-input-file}
+\begin{lstlisting}
+N, 1, 0, 0, 0
+N, 2, 1, 0, 0
+N, 3, 1, 1, 0
+N, 4, 0, 1, 0
+N, 5, 0, 0, 1
+N, 6, 1, 0, 1
+N, 7, 1, 1, 1
+N, 8, 0, 1, 1
+N, 9, 0, 0, 2
+N, 10, 1, 0, 2
+N, 11, 1, 1, 2
+N, 12, 0, 1, 2
+
+D, 1, ALL, 0
+D, 2, ALL, 0
+D, 3, ALL, 0
+D, 4, ALL, 0
+
+F, 9, FZ, -5.
+F, 10, FZ, -5.
+F, 11, FZ, -5.
+F, 12, FZ, -5.
+
+MAT, 1
+MP, EX, 1, 300.
+MP, NUXY, 1, 0.4
+
+E, 1, 2, 3, 4, 5, 6, 7, 8
+E, 5, 6, 7, 8, 9, 10, 11, 12
+
+ZOU, DIS
+ZOU, FOR
+
+ZOU, STE
+ZOU, PST
+
+ZOU, VOB
+ZOU, VOA
+\end{lstlisting}
+
+\section{Running the Program/Program Ouput}
+
+Successful compilation of the program results in a binary file
+named hexfem.  This file can then be run using a correctly constructed
+input file. It will print the requested outputs to the standard output
+on the terminal.
+
+A command like the following may be invoked to execute the program:
+
+\lstset{language=bash,caption={Running the finite element code},label=lst-run}
+\begin{lstlisting}
+./hexfem [Inputfile]
+\end{lstlisting}
+Here [Inputfile] is the input file in the syntax specified.
+
+As the output is directly printed to \emph{standard out},
+it is suggested to redirect the standard output to a file
+using the capabilities that the different operating system shells
+provide.
