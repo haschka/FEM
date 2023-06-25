@@ -1,14 +1,18 @@
 # FEM
+
+Please cite:
+[![DOI](https://zenodo.org/badge/126501079.svg)](https://zenodo.org/badge/latestdoi/126501079)
+
 This is a simple finite element solver, solving hexaheadral elements with
 bubble functions. A complete documentation is shown in
 doc/doc.pdf
 The code is tested to compile using gcc on divers linux systems.
 
-Type make
+Type `make`
 
 Watch the sample in sample.input
 
-Type ./hex_fem_solver sample.input and you are ready to go.
+Type `./hex_fem_solver sample.input` and you are ready to go.
 
 LICENSE
 (c) 2018 Thomas Haschka
